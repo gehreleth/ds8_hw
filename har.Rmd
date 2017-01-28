@@ -1,0 +1,225 @@
+---
+title: "HAR_Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Obtaining & cleaning data
+
+Quote from the assignment:
+
+"The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment."
+
+So, let's download the and save data from the provided url.
+
+```{r}
+ensure.data.presense <- function(url, target_filename) {
+  if (!dir.exists("./data")) {
+    dir.create("./data");
+  }
+  tf0 <- paste("./data", target_filename, sep = "/");
+  if (!file.exists(tf0)) {
+    tmp = tempfile(pattern = "src");
+    download.file(url, tmp, mode = "wb");
+    file.rename(tmp, tf0);
+  }
+}
+
+ensure.data.presense("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv");
+ensure.data.presense("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv");
+
+nonNaColumns <- function(arg) {
+  retVal <- c();
+  for (name in names(arg)) {
+    if (!all(is.na(c(arg[, name])))) {
+      retVal <- c(retVal, name);
+    }
+  }
+  retVal;
+}
+
+rawdata <- read.csv("./data/pml-training.csv", stringsAsFactors = FALSE);
+rawdata_testing <- read.csv("./data/pml-testing.csv", stringsAsFactors = FALSE);
+```
+
+These datasets are relatively wide, 160 columns each. But it is obvious that model should pay attention only to variables which are included in the test set. After examining summary on the test table we could see that vast majority of the columns conatains NA values only. Also, it seems like testing dataset desn't contain the "classe" variable which we should determine by our model while containing "problem_id"" column missing in the training set. Lets' collect non-NA columns from the test data set and use them to take only relevant variables from the raw dataset.
+
+```{r}
+non.na.columns <- function(arg) {
+  retVal <- c();
+  for (name in names(arg)) {
+    if (!all(is.na(c(arg[, name])))) {
+      retVal <- c(retVal, name);
+    }
+  }
+  retVal;
+}
+cols <- non.na.columns(rawdata_testing);
+rawdata <- rawdata[, c("classe", cols[9:length(cols) - 1])]
+
+processed <- with(rawdata, {
+  data.frame(
+    classe=as.factor(classe),
+    roll_belt=as.numeric(roll_belt),
+    pitch_belt=as.numeric(pitch_belt),
+    yaw_belt=as.numeric(yaw_belt),
+    total_accel_belt=as.numeric(total_accel_belt),
+    gyros_belt_x=as.numeric(gyros_belt_x),        
+    gyros_belt_y=as.numeric(gyros_belt_y),
+    gyros_belt_z=as.numeric(gyros_belt_z),
+    accel_belt_x=as.numeric(accel_belt_x),
+    accel_belt_y=as.numeric(accel_belt_y),
+    accel_belt_z=as.numeric(accel_belt_z),
+    magnet_belt_x=as.numeric(magnet_belt_x),
+    magnet_belt_y=as.numeric(magnet_belt_y),
+    magnet_belt_z=as.numeric(magnet_belt_z),
+    roll_arm=as.numeric(roll_arm),
+    pitch_arm=as.numeric(pitch_arm),
+    yaw_arm=as.numeric(yaw_arm),
+    total_accel_arm=as.numeric(total_accel_arm),
+    gyros_arm_x=as.numeric(gyros_arm_x),
+    gyros_arm_y=as.numeric(gyros_arm_y),
+    gyros_arm_z=as.numeric(gyros_arm_z),
+    accel_arm_x=as.numeric(accel_arm_x),
+    accel_arm_y=as.numeric(accel_arm_y),
+    accel_arm_z=as.numeric(accel_arm_z),
+    magnet_arm_x=as.numeric(magnet_arm_x),
+    magnet_arm_y=as.numeric(magnet_arm_y),
+    magnet_arm_z=as.numeric(magnet_arm_z),
+    roll_dumbbell=as.numeric(roll_dumbbell),
+    pitch_dumbbell=as.numeric(pitch_dumbbell),
+    yaw_dumbbell=as.numeric(yaw_dumbbell),
+    total_accel_dumbbell=as.numeric(total_accel_dumbbell),
+    gyros_dumbbell_x=as.numeric(gyros_dumbbell_x),
+    gyros_dumbbell_y=as.numeric(gyros_dumbbell_y),
+    gyros_dumbbell_z=as.numeric(gyros_dumbbell_z),
+    accel_dumbbell_x=as.numeric(accel_dumbbell_x),
+    accel_dumbbell_y=as.numeric(accel_dumbbell_y),    
+    accel_dumbbell_z=as.numeric(accel_dumbbell_z),
+    magnet_dumbbell_x=as.numeric(magnet_dumbbell_x),
+    magnet_dumbbell_y=as.numeric(magnet_dumbbell_y),
+    magnet_dumbbell_z=as.numeric(magnet_dumbbell_z),
+    roll_forearm=as.numeric(roll_forearm),
+    pitch_forearm=as.numeric(pitch_forearm),       
+    yaw_forearm=as.numeric(yaw_forearm),
+    total_accel_forearm=as.numeric(total_accel_forearm),
+    gyros_forearm_x=as.numeric(gyros_forearm_x),
+    gyros_forearm_y=as.numeric(gyros_forearm_y),
+    gyros_forearm_z=as.numeric(gyros_forearm_z),
+    accel_forearm_x=as.numeric(accel_forearm_x),
+    accel_forearm_y=as.numeric(accel_forearm_y),
+    accel_forearm_z=as.numeric(accel_forearm_z),
+    magnet_forearm_x=as.numeric(magnet_forearm_x),
+    magnet_forearm_y=as.numeric(magnet_forearm_y),
+    magnet_forearm_z=as.numeric(magnet_forearm_z))
+  });
+```
+
+The resulting dataset contains 53 variables.
+
+## Exploratory data analysis
+
+At first we must split dataset to training and testing sets before any exploration and work with training set only. The random seed is set to 31337.
+
+```{r}
+library(caret)
+
+set.seed(31337)
+
+inTrain <- createDataPartition(processed$classe, p = 0.7, list = FALSE);
+training <- processed[inTrain,]
+testing <- processed[-inTrain,]
+
+```
+
+53 variables is a still too big number, so let's see if we could get rid of some of them.
+
+```{r}
+nearZeroVar(training, saveMetrics = TRUE)
+```
+
+Nope, this doesn't work. Also, only five of them are corellated.
+
+```{r}
+cmx <- cor(training[,2:53])
+names(training)[findCorrelation(cmx) + 1]
+```
+
+Let's see if we could reduce dimension of the data while still keep most if its variance. By default caret package choose the threshold of 95%, but i'm going to set this explicitly here.
+
+```{r}
+pp <- preProcess(training[,2:53], method = "pca", thresh = 0.95)
+harPC <- predict(pp, training[,2:53])
+dim(harPC)
+```
+
+25 variables, that's somewhat better.
+
+Let's look at first predictor capturing ~20% of the variance and take color from the activity class.
+
+```{r}
+qplot(harPC[,1], harPC[,2], col=training$classe)
+```
+
+It look like this is a solvable problem, for example by boosting ad/or random forest because different activity classes form distinct outliers. It may cause trouble distinguishing D and E activities though, and i'll begin with attempt to create new feature which reliable separate two classes which is going to be integrated into a probably more coarse classifier.
+
+##Model creation
+
+According to exploratory analysis, the most troublesome part may be a D/E misclassification. The boosting method is known to deal with low-contrast features such as this.
+
+```{r results='hide', message=FALSE}
+d.vs.e <- function(arg) {
+  if (arg == "D")
+    1
+  else if (arg == "E")
+    -1
+  else 0
+}
+
+fvse <- sapply(training$classe, d.vs.e);
+fvse.gbm <- train(harPC, fvse, method="gbm");
+```
+```{r}
+fvse.pred <- predict(fvse.gbm, harPC)
+ix0 <- which(abs(fvse) > 0);
+confusionMatrix(sign(fvse.pred[ix0]), fvse[ix0])
+```
+
+The accuracy is about 90%. 
+
+Neural network is another option.
+
+```{r}
+fvse.nnet <- train(harPC, as.factor(fvse), method="nnet", trace = FALSE);
+fvse.pred <- predict(fvse.nnet, harPC);
+ix0 <- which(abs(fvse) > 0);
+confusionMatrix(fvse.pred, fvse)
+```
+The whole A/B/C/D/E model contains 5 categories, so it is possible to use a random forest here. 
+
+```{r results='hide', message=FALSE}
+ds1 <- cbind(data.frame(classe=training$classe, boosting=predict(fvse.gbm, harPC)), harPC);
+
+model <- train(classe ~., data=ds1, method="rf", trace = FALSE);
+```
+```{r}
+pred <- predict(model, ds1);
+confusionMatrix(pred, ds1$classe)
+```
+The accuracy is 100%. This is too good to be true, so the data is probably overfitted. So it is time to run this model on a test dataset.
+
+```{r}
+harPC.test <- predict(pp, testing[,2:53])
+ds1.test <- cbind(data.frame(classe=testing$classe, boosting=predict(fvse.gbm, harPC.test)), harPC.test);
+pred <- predict(model, ds1.test);
+confusionMatrix(pred, ds1.test$classe)
+
+```
+
+Testing dataset shows accuracy of ~97%, which is pretty acceptable for this educational task.
+
+##Conlcusion
+This works covers usege of the few basic caret facilities - data partitioning, singular value decomposition and three classificational facilities - boosting, random forest and neural network.
